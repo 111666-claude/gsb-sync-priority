@@ -24,16 +24,11 @@ type Scheduler struct {
 	Radius      int
 	BudgetBytes int
 
-	seen    map[string]bool
-	pending []Change
 	Scanned int
 }
 
 // Select 依次处理每个 tick，返回被选中的同步记录。
 func (s *Scheduler) Select(changes []Change) []Row {
-	if s.seen == nil {
-		s.seen = map[string]bool{}
-	}
 	byTick := map[int][]Change{}
 	var ticks []int
 	for _, c := range changes {
@@ -46,27 +41,36 @@ func (s *Scheduler) Select(changes []Change) []Row {
 
 	var rows []Row
 	for _, tick := range ticks {
+		seen := map[string]bool{}
+		cand := make([]Change, 0, len(byTick[tick]))
 		for _, c := range byTick[tick] {
-			s.seen[c.Entity] = true
-			s.pending = append(s.pending, c)
-		}
-
-		cand := make([]Change, 0, len(s.pending))
-		for _, c := range s.pending {
 			s.Scanned++
+			if c.Dist > s.Radius {
+				continue
+			}
+			if seen[c.Entity] {
+				continue
+			}
+			seen[c.Entity] = true
 			cand = append(cand, c)
 		}
 		sort.SliceStable(cand, func(i, j int) bool {
-			return cand[i].Priority > cand[j].Priority
+			if cand[i].Priority != cand[j].Priority {
+				return cand[i].Priority > cand[j].Priority
+			}
+			if cand[i].Dist != cand[j].Dist {
+				return cand[i].Dist < cand[j].Dist
+			}
+			return cand[i].Entity < cand[j].Entity
 		})
 
 		used := 0
 		for _, c := range cand {
-			if used >= s.BudgetBytes {
-				break
+			if used+c.Bytes > s.BudgetBytes {
+				continue
 			}
 			rows = append(rows, Row{Tick: tick, Entity: c.Entity, Bytes: c.Bytes})
-			used++
+			used += c.Bytes
 		}
 	}
 	return rows
